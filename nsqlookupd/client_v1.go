@@ -1,3 +1,4 @@
+//与protocolV1的client配合
 package nsqlookupd
 
 import (

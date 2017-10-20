@@ -1,3 +1,4 @@
+//这是V1版本的传输协议
 package nsqlookupd
 
 import (
@@ -28,6 +29,7 @@ func (p *LookupProtocolV1) IOLoop(conn net.Conn) error {
 	client := NewClientV1(conn)
 	reader := bufio.NewReader(client)
 	for {
+		//按行读
 		line, err = reader.ReadString('\n')
 		if err != nil {
 			break
@@ -60,6 +62,7 @@ func (p *LookupProtocolV1) IOLoop(conn net.Conn) error {
 
 		if response != nil {
 			_, err = protocol.SendResponse(client, response)
+			//发送失败一次就直接断掉了
 			if err != nil {
 				break
 			}
@@ -69,6 +72,7 @@ func (p *LookupProtocolV1) IOLoop(conn net.Conn) error {
 	conn.Close()
 	p.ctx.nsqlookupd.logf(LOG_INFO, "CLIENT(%s): closing", client)
 	if client.peerInfo != nil {
+		//生产者断开后删除他注册的信息
 		registrations := p.ctx.nsqlookupd.DB.LookupRegistrations(client.peerInfo.id)
 		for _, r := range registrations {
 			if removed, _ := p.ctx.nsqlookupd.DB.RemoveProducer(r, client.peerInfo.id); removed {
@@ -87,6 +91,7 @@ func (p *LookupProtocolV1) Exec(client *ClientV1, reader *bufio.Reader, params [
 	case "IDENTIFY":
 		return p.IDENTIFY(client, reader, params[1:])
 	case "REGISTER":
+		// 格式为'REGISTER topicName channelName(可选)'
 		return p.REGISTER(client, reader, params[1:])
 	case "UNREGISTER":
 		return p.UNREGISTER(client, reader, params[1:])
@@ -105,10 +110,12 @@ func getTopicChan(command string, params []string) (string, string, error) {
 		channelName = params[1]
 	}
 
+	//topic为字母数字和点，后面可选加#ephemeral，长度不可超过64
 	if !protocol.IsValidTopicName(topicName) {
 		return "", "", protocol.NewFatalClientErr(nil, "E_BAD_TOPIC", fmt.Sprintf("%s topic name '%s' is not valid", command, topicName))
 	}
 
+	//channel名规则同topic，但没有长度限制
 	if channelName != "" && !protocol.IsValidChannelName(channelName) {
 		return "", "", protocol.NewFatalClientErr(nil, "E_BAD_CHANNEL", fmt.Sprintf("%s channel name '%s' is not valid", command, channelName))
 	}
@@ -126,6 +133,7 @@ func (p *LookupProtocolV1) REGISTER(client *ClientV1, reader *bufio.Reader, para
 		return nil, err
 	}
 
+	//有channel的话注册topic + channel，否则只注册topic
 	if channel != "" {
 		key := Registration{"channel", topic, channel}
 		if p.ctx.nsqlookupd.DB.AddProducer(key, &Producer{peerInfo: client.peerInfo}) {
@@ -160,6 +168,7 @@ func (p *LookupProtocolV1) UNREGISTER(client *ClientV1, reader *bufio.Reader, pa
 				client, "channel", topic, channel)
 		}
 		// for ephemeral channels, remove the channel as well if it has no producers
+		//如果channel名后面有#ephemeral，那producer的列表空了就把registration也删了
 		if left == 0 && strings.HasSuffix(channel, "#ephemeral") {
 			p.ctx.nsqlookupd.DB.RemoveRegistration(key)
 		}
@@ -176,6 +185,7 @@ func (p *LookupProtocolV1) UNREGISTER(client *ClientV1, reader *bufio.Reader, pa
 			}
 		}
 
+		//这里topic后面加#ephemeral并没有把registration也删了，不知道为什么
 		key := Registration{"topic", topic, ""}
 		if removed, _ := p.ctx.nsqlookupd.DB.RemoveProducer(key, client.peerInfo.id); removed {
 			p.ctx.nsqlookupd.logf(LOG_INFO, "DB: client(%s) UNREGISTER category:%s key:%s subkey:%s",
@@ -193,6 +203,7 @@ func (p *LookupProtocolV1) IDENTIFY(client *ClientV1, reader *bufio.Reader, para
 		return nil, protocol.NewFatalClientErr(err, "E_INVALID", "cannot IDENTIFY again")
 	}
 
+	//这里看出在第一个\n之后开始存放具体data(body)，协议在body开头保存一个bodylen(4字节)，通过二进制读入
 	var bodyLen int32
 	err = binary.Read(reader, binary.BigEndian, &bodyLen)
 	if err != nil {
@@ -206,12 +217,14 @@ func (p *LookupProtocolV1) IDENTIFY(client *ClientV1, reader *bufio.Reader, para
 	}
 
 	// body is a json structure with producer information
-	peerInfo := PeerInfo{id: client.RemoteAddr().String()}
+	//body里存的是一个json格式的生产者信息
+	peerInfo := PeerInfo{id: client.RemoteAddr().String()} //id号用生产者地址来确定
 	err = json.Unmarshal(body, &peerInfo)
 	if err != nil {
 		return nil, protocol.NewFatalClientErr(err, "E_BAD_BODY", "IDENTIFY failed to decode JSON body")
 	}
 
+	//这个存的也是生产者地址……之后的id可能会有别的形式吧
 	peerInfo.RemoteAddress = client.RemoteAddr().String()
 
 	// require all fields
@@ -219,6 +232,7 @@ func (p *LookupProtocolV1) IDENTIFY(client *ClientV1, reader *bufio.Reader, para
 		return nil, protocol.NewFatalClientErr(nil, "E_BAD_BODY", "IDENTIFY missing fields")
 	}
 
+	//更新最后访问时间
 	atomic.StoreInt64(&peerInfo.lastUpdate, time.Now().UnixNano())
 
 	p.ctx.nsqlookupd.logf(LOG_INFO, "CLIENT(%s): IDENTIFY Address:%s TCP:%d HTTP:%d Version:%s",
@@ -230,6 +244,7 @@ func (p *LookupProtocolV1) IDENTIFY(client *ClientV1, reader *bufio.Reader, para
 	}
 
 	// build a response
+	//把lookup的信息返回
 	data := make(map[string]interface{})
 	data["tcp_port"] = p.ctx.nsqlookupd.RealTCPAddr().Port
 	data["http_port"] = p.ctx.nsqlookupd.RealHTTPAddr().Port
@@ -252,6 +267,7 @@ func (p *LookupProtocolV1) IDENTIFY(client *ClientV1, reader *bufio.Reader, para
 func (p *LookupProtocolV1) PING(client *ClientV1, params []string) ([]byte, error) {
 	if client.peerInfo != nil {
 		// we could get a PING before other commands on the same client connection
+		//使用atomic含义可能是取地址和读取数值在底层是两步操作
 		cur := time.Unix(0, atomic.LoadInt64(&client.peerInfo.lastUpdate))
 		now := time.Now()
 		p.ctx.nsqlookupd.logf(LOG_INFO, "CLIENT(%s): pinged (last ping %s)", client.peerInfo.id,

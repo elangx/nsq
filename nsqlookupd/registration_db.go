@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
+//储存message的结构
 type RegistrationDB struct {
-	sync.RWMutex
+	sync.RWMutex    //有读写锁
 	registrationMap map[Registration]Producers
 }
 
@@ -19,8 +20,9 @@ type Registration struct {
 }
 type Registrations []Registration
 
+//保存一个注册的节点
 type PeerInfo struct {
-	lastUpdate       int64
+	lastUpdate       int64 //最后心跳包的时间
 	id               string
 	RemoteAddress    string `json:"remote_address"`
 	Hostname         string `json:"hostname"`

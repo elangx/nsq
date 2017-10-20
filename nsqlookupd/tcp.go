@@ -17,6 +17,7 @@ func (p *tcpServer) Handle(clientConn net.Conn) {
 	// The client should initialize itself by sending a 4 byte sequence indicating
 	// the version of the protocol that it intends to communicate, this will allow us
 	// to gracefully upgrade the protocol away from text/line oriented to whatever...
+	//读取定长的头，前4字节为协议版本号，升级版本时比较方便
 	buf := make([]byte, 4)
 	_, err := io.ReadFull(clientConn, buf)
 	if err != nil {

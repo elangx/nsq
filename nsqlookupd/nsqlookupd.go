@@ -1,3 +1,4 @@
+// nsq的管理部分，用于管理所有的nsq节点，所有服务都要向它注册
 package nsqlookupd
 
 import (
@@ -13,11 +14,12 @@ import (
 	"github.com/nsqio/nsq/internal/version"
 )
 
+//管理器结构
 type NSQLookupd struct {
 	sync.RWMutex
 	opts         *Options
-	tcpListener  net.Listener
-	httpListener net.Listener
+	tcpListener  net.Listener //tcp的listener，用于监听所有nsq节点的心跳包，探活
+	httpListener net.Listener //http的listener
 	waitGroup    util.WaitGroupWrapper
 	DB           *RegistrationDB
 }
@@ -43,6 +45,7 @@ func New(opts *Options) *NSQLookupd {
 }
 
 func (l *NSQLookupd) Main() {
+	//定义的上下文中是一个指向l的指针
 	ctx := &Context{l}
 
 	tcpListener, err := net.Listen("tcp", l.opts.TCPAddress)
@@ -54,6 +57,7 @@ func (l *NSQLookupd) Main() {
 	l.tcpListener = tcpListener
 	l.Unlock()
 	tcpServer := &tcpServer{ctx: ctx}
+	//添加waitgroup，在Exit()关闭时要等服务起动后才可以，刚Exit()中的Wait()
 	l.waitGroup.Wrap(func() {
 		protocol.TCPServer(tcpListener, tcpServer, l.logf)
 	})
@@ -66,6 +70,7 @@ func (l *NSQLookupd) Main() {
 	l.Lock()
 	l.httpListener = httpListener
 	l.Unlock()
+	//用以给admin提供数据的一些api接口
 	httpServer := newHTTPServer(ctx)
 	l.waitGroup.Wrap(func() {
 		http_api.Serve(httpListener, httpServer, "HTTP", l.logf)

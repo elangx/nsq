@@ -19,6 +19,7 @@ func TCPServer(listener net.Listener, handler TCPHandler, logf lg.AppLogFunc) {
 		clientConn, err := listener.Accept()
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Temporary() {
+				//网络临时原因，切换到其它goroutine，不跳出方法
 				logf(lg.WARN, "temporary Accept() failure - %s", err)
 				runtime.Gosched()
 				continue

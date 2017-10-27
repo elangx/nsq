@@ -2,6 +2,7 @@ package nsqd
 
 type inFlightPqueue []*Message
 
+//一个小顶堆的形式
 func newInFlightPqueue(capacity int) inFlightPqueue {
 	return make(inFlightPqueue, 0, capacity)
 }
@@ -45,10 +46,12 @@ func (pq *inFlightPqueue) Pop() *Message {
 func (pq *inFlightPqueue) Remove(i int) *Message {
 	n := len(*pq)
 	if n-1 != i {
+		//把i换到最后一位，然后重新调整i到n-1和i以上的堆位置
 		pq.Swap(i, n-1)
 		pq.down(i, n-1)
 		pq.up(i)
 	}
+	//前掉第n-1个
 	x := (*pq)[n-1]
 	x.index = -1
 	*pq = (*pq)[0 : n-1]
@@ -60,6 +63,7 @@ func (pq *inFlightPqueue) PeekAndShift(max int64) (*Message, int64) {
 		return nil, 0
 	}
 
+	//取得pri最小的
 	x := (*pq)[0]
 	if x.pri > max {
 		return nil, x.pri - max
@@ -69,6 +73,7 @@ func (pq *inFlightPqueue) PeekAndShift(max int64) (*Message, int64) {
 	return x, 0
 }
 
+//调整i以上的，保持小顶堆
 func (pq *inFlightPqueue) up(j int) {
 	for {
 		i := (j - 1) / 2 // parent
@@ -80,6 +85,7 @@ func (pq *inFlightPqueue) up(j int) {
 	}
 }
 
+//调整i以下，保持小顶堆
 func (pq *inFlightPqueue) down(i, n int) {
 	for {
 		j1 := 2*i + 1

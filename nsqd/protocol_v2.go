@@ -33,6 +33,7 @@ type protocolV2 struct {
 	ctx *context
 }
 
+//与消费者的循环
 func (p *protocolV2) IOLoop(conn net.Conn) error {
 	var err error
 	var line []byte
@@ -46,6 +47,7 @@ func (p *protocolV2) IOLoop(conn net.Conn) error {
 	// goroutine local state derived from client attributes
 	// and avoid a potential race with IDENTIFY (where a client
 	// could have changed or disabled said attributes)
+	//这个chan主要为了保证messagePump里初始化完成后再进行下面的for循环，不过感觉很丑陋的方式
 	messagePumpStartedChan := make(chan bool)
 	go p.messagePump(client, messagePumpStartedChan)
 	<-messagePumpStartedChan
@@ -626,6 +628,7 @@ func (p *protocolV2) SUB(client *clientV2, params [][]byte) ([]byte, error) {
 	atomic.StoreInt32(&client.State, stateSubscribed)
 	client.Channel = channel
 	// update message pump
+	//只有这个client订阅了，才初始化subEventChan
 	client.SubEventChan <- channel
 
 	return okBytes, nil

@@ -31,6 +31,7 @@ type Options struct {
 	HTTPClientRequestTimeout time.Duration `flag:"http-client-request-timeout" cfg:"http_client_request_timeout"`
 
 	// diskqueue options
+	//消息延迟后会落在disk上？还是每条消息都会落？
 	DataPath        string        `flag:"data-path"`
 	MemQueueSize    int64         `flag:"mem-queue-size"`
 	MaxBytesPerFile int64         `flag:"max-bytes-per-file"`

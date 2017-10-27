@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/nsqio/go-diskqueue"
 	"github.com/nsqio/nsq/internal/lg"
 	"github.com/nsqio/nsq/internal/pqueue"
 	"github.com/nsqio/nsq/internal/quantile"
@@ -35,6 +34,7 @@ type Consumer interface {
 // messages, timeouts, requeuing, etc.
 type Channel struct {
 	// 64bit atomic vars need to be first for proper alignment on 32bit platforms
+	//重排队数
 	requeueCount uint64
 	messageCount uint64
 	timeoutCount uint64
@@ -323,6 +323,7 @@ func (c *Channel) PutMessageDeferred(msg *Message, timeout time.Duration) {
 }
 
 // TouchMessage resets the timeout for an in-flight message
+//等于重新排队这条msg
 func (c *Channel) TouchMessage(clientID int64, id MessageID, clientMsgTimeout time.Duration) error {
 	msg, err := c.popInFlightMessage(clientID, id)
 	if err != nil {
@@ -331,6 +332,7 @@ func (c *Channel) TouchMessage(clientID int64, id MessageID, clientMsgTimeout ti
 	c.removeFromInFlightPQ(msg)
 
 	newTimeout := time.Now().Add(clientMsgTimeout)
+	//如果超时设定的对于此msg大于MaxTimeout，则直接使用MaxTimeout
 	if newTimeout.Sub(msg.deliveryTS) >=
 		c.ctx.nsqd.getOpts().MaxMsgTimeout {
 		// we would have gone over, set to the max
@@ -347,6 +349,7 @@ func (c *Channel) TouchMessage(clientID int64, id MessageID, clientMsgTimeout ti
 }
 
 // FinishMessage successfully discards an in-flight message
+//client拿到msg后会发送消息表示这个消息已经收到了，这时把这个消息从in flight队列里拿出来
 func (c *Channel) FinishMessage(clientID int64, id MessageID) error {
 	msg, err := c.popInFlightMessage(clientID, id)
 	if err != nil {
@@ -365,6 +368,7 @@ func (c *Channel) FinishMessage(clientID int64, id MessageID) error {
 // `timeoutMs`  > 0 - asynchronously wait for the specified timeout
 //     and requeue a message (aka "deferred requeue")
 //
+//重新排队
 func (c *Channel) RequeueMessage(clientID int64, id MessageID, timeout time.Duration) error {
 	// remove from inflight first
 	msg, err := c.popInFlightMessage(clientID, id)
@@ -374,6 +378,7 @@ func (c *Channel) RequeueMessage(clientID int64, id MessageID, timeout time.Dura
 	c.removeFromInFlightPQ(msg)
 	atomic.AddUint64(&c.requeueCount, 1)
 
+	//如果延迟为0，则立马发送
 	if timeout == 0 {
 		c.exitMutex.RLock()
 		if c.Exiting() {
@@ -417,8 +422,10 @@ func (c *Channel) RemoveClient(clientID int64) {
 	}
 }
 
+//开始in flight消息的计时
 func (c *Channel) StartInFlightTimeout(msg *Message, clientID int64, timeout time.Duration) error {
 	now := time.Now()
+	//这里要认证clientID，确保后面交互时验证，及发消息
 	msg.clientID = clientID
 	msg.deliveryTS = now
 	msg.pri = now.Add(timeout).UnixNano()
@@ -430,6 +437,7 @@ func (c *Channel) StartInFlightTimeout(msg *Message, clientID int64, timeout tim
 	return nil
 }
 
+//初始化一条延迟消息，就是把这个消息添加的队列中
 func (c *Channel) StartDeferredTimeout(msg *Message, timeout time.Duration) error {
 	absTs := time.Now().Add(timeout).UnixNano()
 	item := &pqueue.Item{Value: msg, Priority: absTs}
@@ -502,6 +510,7 @@ func (c *Channel) pushDeferredMessage(item *pqueue.Item) error {
 	return nil
 }
 
+//弹出一条延迟消息
 func (c *Channel) popDeferredMessage(id MessageID) (*pqueue.Item, error) {
 	c.deferredMutex.Lock()
 	// TODO: these map lookups are costly
@@ -521,6 +530,7 @@ func (c *Channel) addToDeferredPQ(item *pqueue.Item) {
 	c.deferredMutex.Unlock()
 }
 
+//处理延迟消息
 func (c *Channel) processDeferredQueue(t int64) bool {
 	c.exitMutex.RLock()
 	defer c.exitMutex.RUnlock()
@@ -552,6 +562,7 @@ exit:
 	return dirty
 }
 
+//处理In flight消息，实际就是处理超时的消息
 func (c *Channel) processInFlightQueue(t int64) bool {
 	c.exitMutex.RLock()
 	defer c.exitMutex.RUnlock()
@@ -575,6 +586,7 @@ func (c *Channel) processInFlightQueue(t int64) bool {
 		if err != nil {
 			goto exit
 		}
+		//超时计数加1
 		atomic.AddUint64(&c.timeoutCount, 1)
 		c.RLock()
 		client, ok := c.clients[msg.clientID]
@@ -582,6 +594,7 @@ func (c *Channel) processInFlightQueue(t int64) bool {
 		if ok {
 			client.TimedOutMessage()
 		}
+		//把消息重新放入队列
 		c.put(msg)
 	}
 
